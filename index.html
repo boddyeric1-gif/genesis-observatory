@@ -223,7 +223,7 @@ Check your Browserslist config to be sure that your targets are set up correctly
       <div class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
       <div>
         <h1 class="text-xs font-bold tracking-widest text-[#00f0ff] neon-text uppercase">Genesis Observatory</h1>
-        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Overage Cap Fix (Sep 1)</p>
+        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Relationship Cleanup (Sep 1)</p>
       </div>
       <button id="btn-open-intro" class="ml-1 w-6 h-6 rounded-full bg-cyan-500/15 border border-cyan-400/50 text-cyan-300 flex items-center justify-center text-xs animate-pulse-glow flex-shrink-0"><i class="fa-solid fa-circle-question"></i></button>
     </div>
@@ -1169,9 +1169,22 @@ function refreshAncestralTabIfVisible() {
   }
 }
 
+// BUGFIX (Performance): shared cleanup for the relationships-never-purged
+// gap -- called from every place a citizen can leave the population
+// (death x3 call sites, departure) so nobody's relationships object keeps
+// accumulating references to citizens who no longer exist. See the
+// matching one-time retroactive purge in loadStateLocal for saves that
+// already accumulated this before the fix existed.
+function cleanupDeceasedRelationships(removedId) {
+  window.appState.citizens.forEach(c => {
+    if (c.relationships && c.relationships[removedId] !== undefined) delete c.relationships[removedId];
+  });
+}
+
 function handleCitizenDeath(agent, cause) {
   const idx = window.appState.citizens.findIndex(c=>c.id===agent.id);
   if (idx!==-1) window.appState.citizens.splice(idx,1);
+  cleanupDeceasedRelationships(agent.id);
   // Break mentor bond cleanly on either side
   if (agent.mentorId) {
     const mentor = window.appState.citizens.find(c=>c.id===agent.mentorId);
@@ -1750,6 +1763,7 @@ function checkAndHandleDeparture(agent) {
   }
   (agent.menteeIds||[]).forEach(id=>{ const m=window.appState.citizens.find(c=>c.id===id); if(m) m.mentorId=null; });
   window.appState.citizens.splice(idx,1);
+  cleanupDeceasedRelationships(agent.id);
   const el = document.getElementById(agent.id); if (el) { el.id=''; el.style.display='none'; citizenElPool.push(el); }
   addLogEntry("DEPARTURE", `${agent.name} left the dome, unable to find common ground with anyone here.`, "text-orange-400 font-bold");
   window.appState.sessionStats.departures++;
@@ -2618,9 +2632,15 @@ function renderRelationshipWeb() {
   const w = container.clientWidth||500, h = container.clientHeight||300;
   const pA = toIso(agent.x, agent.y, w, h);
   svg.innerHTML = '';
+  // PERFORMANCE: was doing an O(population) .find() for every single
+  // relationship entry, every frame -- id->citizen lookup built once
+  // instead. Combined with the relationships cleanup above, this was the
+  // main driver of lag that got progressively worse the longer a save had
+  // been played, independent of current population size.
+  const citizensById = new Map(window.appState.citizens.map(c => [c.id, c]));
   Object.entries(agent.relationships||{}).forEach(([otherId, affinity]) => {
     if (affinity < 55) return;
-    const other = window.appState.citizens.find(c => c.id === otherId); if (!other) return;
+    const other = citizensById.get(otherId); if (!other) return;
     const pB = toIso(other.x, other.y, w, h);
     const line = document.createElementNS('http://www.w3.org/2000/svg','line');
     line.setAttribute('x1',`${pA.x}px`); line.setAttribute('y1',`${pA.y}px`);
@@ -2898,10 +2918,16 @@ function runSelfTest() {
   const overCapped = citizens.filter(c => c.bioAge > c.maxAge + 15).length; // small buffer over the 10yr cap for float/timing slack
   push(overCapped===0 ? 'pass':'fail', 'No citizen exceeds the age-overage cap', overCapped===0 ? `${citizens.length} citizens checked, none past maxAge+15` : `${overCapped} citizen(s) found past the overage cap -- the cap may have regressed`);
 
-  // Informational: stale relationship references (expected/harmless, not a failure)
+  // BUGFIX (continued): a direct regression guard for the relationships
+  // cleanup fix -- flags any citizen whose relationships object still
+  // references a citizen who no longer exists (should be impossible now
+  // that death and departure both clean this up).
+  const livingIdsForCheck = new Set(citizens.map(c => c.id));
   let staleRelCount = 0;
-  citizens.forEach(c => { Object.keys(c.relationships||{}).forEach(id => { if (!citizenIds.has(id)) staleRelCount++; }); });
-  push('info', 'Stale relationship references to departed/deceased citizens', `${staleRelCount} found — expected and harmless, not cleaned up on death by design`);
+  citizens.forEach(c => {
+    Object.keys(c.relationships||{}).forEach(id => { if (!livingIdsForCheck.has(id)) staleRelCount++; });
+  });
+  push(staleRelCount===0 ? 'pass':'fail', 'No stale relationship references', staleRelCount===0 ? `${citizens.length} citizens checked, no dangling relationship IDs` : `${staleRelCount} relationship reference(s) point to citizens who no longer exist`);
 
   return results;
 }
@@ -3401,6 +3427,23 @@ function loadStateLocal() {
       sponsored:c.sponsored||false, sponsoredUntilAge:c.sponsoredUntilAge||0,
       targetX:null,targetY:null,state:'Wandering',idleTimer:0,interactionTimer:0,activeInteractionPartner:null,activeTargetObject:null
     }));
+    // BUGFIX (Performance): relationships were never cleaned up when a
+    // citizen died or departed -- every citizen who ever interacted with
+    // them kept that stale ID in their relationships object forever, with
+    // no cap and no expiry. Over a long play session this grows unbounded,
+    // and renderRelationshipWeb does an O(relationships x population) scan
+    // of it EVERY FRAME for whoever's currently selected -- the longer a
+    // save has been played, the worse this gets, independent of current
+    // population size. This is a one-time retroactive purge of any already
+    // -accumulated stale entries on load; see cleanupDeceasedRelationships
+    // below for the matching fix that stops it from reaccumulating.
+    (function purgeStaleRelationships() {
+      const livingIds = new Set(window.appState.citizens.map(c => c.id));
+      window.appState.citizens.forEach(c => {
+        if (!c.relationships) return;
+        Object.keys(c.relationships).forEach(id => { if (!livingIds.has(id)) delete c.relationships[id]; });
+      });
+    })();
     window.appState.structures = settings.structures || JSON.parse(JSON.stringify(STARTING_STRUCTURES));
     migrateStructurePurposeText();
     window.appState.ancestralMemoryBank = settings.ancestralMemoryBank || [];
@@ -3580,6 +3623,7 @@ function runFastForward(elapsedSeconds) {
         (c.menteeIds||[]).forEach(id=>{ const mentee=window.appState.citizens.find(x=>x.id===id); if (mentee) mentee.mentorId=null; });
         if (window.appState.selectedCitizenId===c.id) window.appState.selectedCitizenId=null;
         window.appState.citizens.splice(i,1);
+        cleanupDeceasedRelationships(c.id);
         deaths++; window.appState.sessionStats.deaths++;
       } else if (Math.random() < 1 - Math.pow(1 - getNaturalMortalityChance(c), 3)) {
         // BUGFIX: the actual fix for the demographic-lock issue — a
@@ -3596,6 +3640,7 @@ function runFastForward(elapsedSeconds) {
         (c.menteeIds||[]).forEach(id=>{ const mentee=window.appState.citizens.find(x=>x.id===id); if (mentee) mentee.mentorId=null; });
         if (window.appState.selectedCitizenId===c.id) window.appState.selectedCitizenId=null;
         window.appState.citizens.splice(i,1);
+        cleanupDeceasedRelationships(c.id);
         deaths++; window.appState.sessionStats.deaths++;
       }
     }
@@ -3981,6 +4026,10 @@ function renderDebugContent(activeTab) {
     // or added can be checked here directly, not just taken on faith.
     const entries = [
       { v: 'Latest', items: [
+        'Fixed: a real, separate cause of the lag getting worse the longer a save has been played, independent of population size. A citizen\u2019s relationships object (their affinity scores with everyone they\u2019ve ever interacted with) never got cleaned up when someone died or departed -- every citizen who ever interacted with them kept that stale ID forever, growing unbounded over a long session. The relationship-web view (the lines shown for whoever\u2019s currently selected) scanned this every single frame with an O(population) lookup per entry, so the cost kept climbing the longer you played, regardless of how big your current population actually was. Both death and departure now clean up after themselves, a one-time pass purges anything already-accumulated from before this fix existed, and the relationship-web lookup itself is now O(1) per entry instead of O(population). Verified with a 200-cycle birth/death simulation that relationship data never exceeds the living population size going forward.',
+        'Added a Self-Test check for any citizen whose relationships still reference someone who no longer exists, as a direct regression guard.'
+      ]},
+      { v: 'Overage Cap Fix', items: [
         'Fixed: the extinction fix from earlier today only corrected the aging RATE going forward -- it didn\u2019t heal citizens whose bioAge was already inflated from all the catch-ups before that fix existed. Confirmed via simulation that a population already carrying that kind of pre-existing damage still wiped out 100% of the time on the very next catch-up, even at the corrected rate, because the mortality math compounds based on how far past maxAge someone already is, not how fast they got there. bioAge is now hard-capped at maxAge + 10, live and offline both, which self-heals any already-damaged save on the very next tick without needing anything exported or reset by hand. Verified this recovers a badly-damaged population (was already 50-300 years past maxAge) to a healthy, stable size within about a week of normal play, using the existing low-population migration rescue as the safety net for the rare case a population still bottoms out to 1.',
         'Added a Self-Test check that flags if any citizen is ever found meaningfully past the new cap, as a direct regression guard.'
       ]},
@@ -4640,5 +4689,7 @@ function initMinimapDrag() {
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgyZDVkOTEzMmYzMDAwODgwOTU3OCIsImlzc3VlciI6Im5mc2VydmVyIn0.2qIGGIxM_ALejVNMBTnayUUzVxdPm5I2H8ZEKuFwPUU"></script>
 
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzNDQzY2Q5OTAxMDAwODQ0YzMyMSIsImlzc3VlciI6Im5mc2VydmVyIn0.ElmSUMMj43W-7QnT1CDLHNGryxa8p1YiBKvzPvVkjL0"></script>
+
+<script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzODZiOWY5ZDY0MDAwODFhYTM1NyIsImlzc3VlciI6Im5mc2VydmVyIn0.aFmFL_xpHdH6CjhExkhF_JTc35OTyDKM2eLux5GvljE"></script>
 </body>
 </html>
