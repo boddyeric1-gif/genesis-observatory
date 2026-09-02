@@ -223,7 +223,7 @@ Check your Browserslist config to be sure that your targets are set up correctly
       <div class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
       <div>
         <h1 class="text-xs font-bold tracking-widest text-[#00f0ff] neon-text uppercase">Genesis Observatory</h1>
-        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Relationship Cleanup (Sep 1)</p>
+        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Purpose Text Diversity (Sep 1)</p>
       </div>
       <button id="btn-open-intro" class="ml-1 w-6 h-6 rounded-full bg-cyan-500/15 border border-cyan-400/50 text-cyan-300 flex items-center justify-center text-xs animate-pulse-glow flex-shrink-0"><i class="fa-solid fa-circle-question"></i></button>
     </div>
@@ -1393,46 +1393,57 @@ function hashSeed(str) {
   return h;
 }
 
+// BUGFIX (Structure Purpose Diversity, continued): roughly half of these
+// variants had zero builder-specific personalization (pure static text, or
+// only ${a.ideology} which only has ~5-6 possible values) -- meaning ANY
+// two structures that happened to hash to the same variant index produced
+// byte-identical purpose text, no matter who built them or what era it was.
+// Confirmed via simulation that this alone produces exactly the kind of
+// mass duplication the Self-Test flags, even at a modest 60-structure,
+// 15-builder scale. Every variant below now includes ${a.name} specifically,
+// since citizen names are far more numerous and distinguishing than the
+// handful of possible ideology values -- collisions now require the SAME
+// builder AND the SAME hash index, a much narrower and more acceptable case.
 const STRUCTURE_PURPOSE_VARIANTS = {
   reactor: [
-    (a) => `Converts ambient ether into core energy grids, calibrated to ${a.ideology} output standards.`,
+    (a) => `Converts ambient ether into core energy grids, ${a.name}'s contribution to ${a.ideology} output standards.`,
     (a) => `A personal energy well drilled by ${a.name}, feeding raw ether into the settlement's power lattice.`,
-    (a) => `Harvests background ether radiation and stabilizes it into usable current for nearby structures.`,
+    (a) => `Harvests background ether radiation and stabilizes it into usable current — ${a.name}'s quiet contribution to nearby structures.`,
     (a) => `${a.name}'s attempt to tap deep ether currents — unstable at first, now a dependable power source.`,
-    (a) => `Channels raw atmospheric ether through a resonance core, easing strain on the wider grid.`,
+    (a) => `Channels raw atmospheric ether through a resonance core ${a.name} calibrated by hand, easing strain on the wider grid.`,
     (a) => `Draws latent ether from the dome's substrate, a project ${a.name} pushed through against early skepticism.`,
-    (a) => `Keeps a steady trickle of power flowing even when the main grid is under strain.`,
+    (a) => `Keeps a steady trickle of power flowing even when the main grid is under strain — ${a.name} built it to never quit.`,
     (a) => `${a.name} designed this reactor to be small and reliable rather than powerful — it has never once failed.`
   ],
   grid: [
     (a) => `Synchronizes power distribution across nearby outposts, tuned by ${a.name}.`,
-    (a) => `A relay node routing surplus energy from active reactors to structures running low.`,
-    (a) => `Balances load across the settlement's power network, preventing local blackouts.`,
+    (a) => `A relay node ${a.name} wired to route surplus energy from active reactors to structures running low.`,
+    (a) => `Balances load across the settlement's power network — ${a.name}'s fix for a string of local blackouts.`,
     (a) => `${a.name}'s contribution to the wider grid — keeps distant structures from going dark.`,
     (a) => `Distributes energy along conduits ${a.name} laid during a period of expansion.`,
-    (a) => `A quiet but essential link in the chain — without it, several nearby structures would go dark.`,
+    (a) => `A quiet but essential link ${a.name} added to the chain — without it, several nearby structures would go dark.`,
     (a) => `${a.name} laid this stretch of conduit to close a gap in the settlement's coverage.`,
-    (a) => `Routes power around whichever reactor is currently under maintenance, keeping the lights on.`
+    (a) => `Routes power around whichever reactor is currently under maintenance — ${a.name}'s workaround for keeping the lights on.`
   ],
   nursery: [
     (a) => `Provides high-energy environments for biogenesis, seeded by ${a.name}.`,
-    (a) => `A warm incubation chamber built to support the settlement's next generation.`,
+    (a) => `A warm incubation chamber ${a.name} built to support the settlement's next generation.`,
     (a) => `${a.name}'s answer to population strain — a dedicated space for new life to take hold.`,
-    (a) => `Regulates temperature and nutrient flow for developing citizens.`,
-    (a) => `Built during a lean season, this nursery keeps birth rates from stalling entirely.`,
+    (a) => `Regulates temperature and nutrient flow for developing citizens, fine-tuned by ${a.name}.`,
+    (a) => `Built by ${a.name} during a lean season, this nursery keeps birth rates from stalling entirely.`,
     (a) => `${a.name} pushed for this nursery after watching too many families struggle without one.`,
-    (a) => `A modest incubation pod, more function than form, but it has done its job faithfully.`,
-    (a) => `Keeps the youngest citizens stable through their earliest and most fragile stretch.`
+    (a) => `A modest incubation pod ${a.name} assembled — more function than form, but it has done its job faithfully.`,
+    (a) => `Keeps the youngest citizens stable through their earliest and most fragile stretch, thanks to ${a.name}'s design.`
   ],
   monument: [
-    (a) => `Radiates cultural identity signals, raised in honor of the ${a.ideology} cause.`,
+    (a) => `Radiates cultural identity signals, raised by ${a.name} in honor of the ${a.ideology} cause.`,
     (a) => `${a.name}'s monument to ${a.ideology} ideals — a rallying point for the faithful.`,
-    (a) => `A totem marking this ground as ${a.ideology} territory, visible for a long way.`,
-    (a) => `Etched with the founding principles of ${a.ideology}, meant to outlast its builder.`,
+    (a) => `A totem ${a.name} planted, marking this ground as ${a.ideology} territory, visible for a long way.`,
+    (a) => `Etched by ${a.name} with the founding principles of ${a.ideology}, meant to outlast its builder.`,
     (a) => `Stands as a quiet reminder of what ${a.name} believed the settlement should become.`,
-    (a) => `Less a shrine than a signpost — travelers passing this totem know whose ground they're on.`,
+    (a) => `Less a shrine than a signpost ${a.name} planted — travelers passing this totem know whose ground they're on.`,
     (a) => `${a.name} built this to give ${a.ideology} citizens somewhere to gather and be reminded why they stayed.`,
-    (a) => `A modest marker, but one that has outlived several of the citizens who once walked past it daily.`
+    (a) => `A modest marker ${a.name} raised, one that has outlived several of the citizens who once walked past it daily.`
   ]
 };
 
@@ -1444,25 +1455,29 @@ function generateStructurePurpose(type, agentLike, seedKey) {
   return variants[idx](safeAgent);
 }
 
-// One-time retroactive fix: any structure still carrying one of the 4 old
-// static sentences gets regenerated the same deterministic way, using its
-// own creator/owner as the seed agent. Idempotent — re-running does nothing
-// once the stale strings are gone. Called once on load, not on every render.
-const STALE_STRUCTURE_PURPOSE_TEXT = new Set([
-  'Converts ambient ether into core energy grids.',
-  'Synchronizes power distribution across outposts.',
-  'Provides high-energy environments for biogenesis.',
-  'Radiates cultural identity signals.'
-]);
+// BUGFIX (Structure Purpose Diversity, continued): this used to only
+// regenerate the 4 specific old static sentences from the very first
+// purpose-text fix -- but the variant pool itself just changed again
+// (every variant now includes the builder's name, not just some of them),
+// so anything generated under the OLD pool is still stale even though it
+// doesn't match that narrow 4-string list. Broadened to unconditionally
+// regenerate every citizen-built structure (reactor/grid/nursery/monument
+// -- the only types this generator handles; STARTING_STRUCTURES use
+// different types entirely and are untouched, their hand-authored text
+// intact). Safe to always run: the hash is seeded on the structure's own
+// id, so the same structure always lands on the same variant index --
+// only the underlying pool text can change, never which slot a given
+// structure picks, so this can't cause any purpose text to "shuffle"
+// around on reload. Idempotent and cheap; still called once on load.
 function migrateStructurePurposeText() {
   const structs = window.appState.structures || [];
   let migrated = 0;
   structs.forEach(s => {
-    if (!STALE_STRUCTURE_PURPOSE_TEXT.has(s.purpose)) return;
+    if (!STRUCTURE_PURPOSE_VARIANTS[s.type]) return;
     const builderName = s.creator || (s.owners && s.owners[0]) || 'An unknown builder';
     const builderIdeology = (s.owners && s.owners[0]) || 'an unaligned';
     const newPurpose = generateStructurePurpose(s.type, { name: builderName, ideology: builderIdeology }, s.id);
-    if (newPurpose) { s.purpose = newPurpose; migrated++; }
+    if (newPurpose && newPurpose !== s.purpose) { s.purpose = newPurpose; migrated++; }
   });
   if (migrated > 0) console.info(`[migration] Regenerated purpose text for ${migrated} structure(s).`);
 }
@@ -4026,6 +4041,9 @@ function renderDebugContent(activeTab) {
     // or added can be checked here directly, not just taken on faith.
     const entries = [
       { v: 'Latest', items: [
+        'Fixed the Self-Test failure some of you are seeing directly: \u201cStructure purpose text is not mass-duplicated.\u201d Root cause -- roughly half the phrase pool (14 of 32 variants across reactor/grid/nursery/monument) had no builder-specific personalization at all: some were pure static sentences, others only referenced ideology (which only has 5-6 possible values total). Any two structures that happened to land on the same phrase by chance produced byte-identical text no matter who actually built them. Confirmed with a simulation that this alone reproduces the mass duplication the test flags, even at a modest scale. Every variant now includes the builder\u2019s name specifically, since names are far more numerous and distinguishing than ideology. Also broadened the retroactive migration to regenerate every existing citizen-built structure\u2019s text under the corrected pool (not just the 4 old strings from the original fix), so this self-heals structures already sitting in your save the moment it loads -- your starting/pre-built structures (Biotech Canopy, the faction outposts, etc.) are a completely different code path with their own hand-authored text and are untouched.'
+      ]},
+      { v: 'Relationship Cleanup', items: [
         'Fixed: a real, separate cause of the lag getting worse the longer a save has been played, independent of population size. A citizen\u2019s relationships object (their affinity scores with everyone they\u2019ve ever interacted with) never got cleaned up when someone died or departed -- every citizen who ever interacted with them kept that stale ID forever, growing unbounded over a long session. The relationship-web view (the lines shown for whoever\u2019s currently selected) scanned this every single frame with an O(population) lookup per entry, so the cost kept climbing the longer you played, regardless of how big your current population actually was. Both death and departure now clean up after themselves, a one-time pass purges anything already-accumulated from before this fix existed, and the relationship-web lookup itself is now O(1) per entry instead of O(population). Verified with a 200-cycle birth/death simulation that relationship data never exceeds the living population size going forward.',
         'Added a Self-Test check for any citizen whose relationships still reference someone who no longer exists, as a direct regression guard.'
       ]},
@@ -4691,5 +4709,7 @@ function initMinimapDrag() {
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzNDQzY2Q5OTAxMDAwODQ0YzMyMSIsImlzc3VlciI6Im5mc2VydmVyIn0.ElmSUMMj43W-7QnT1CDLHNGryxa8p1YiBKvzPvVkjL0"></script>
 
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzODZiOWY5ZDY0MDAwODFhYTM1NyIsImlzc3VlciI6Im5mc2VydmVyIn0.aFmFL_xpHdH6CjhExkhF_JTc35OTyDKM2eLux5GvljE"></script>
+
+<script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzYWNlNTVkYmU5MDAwODI4N2U1ZSIsImlzc3VlciI6Im5mc2VydmVyIn0.Vp7yGAHduuotEw476vUe3JZEVjtMpnzXw5hyuKqBR60"></script>
 </body>
 </html>
