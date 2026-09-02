@@ -223,7 +223,7 @@ Check your Browserslist config to be sure that your targets are set up correctly
       <div class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
       <div>
         <h1 class="text-xs font-bold tracking-widest text-[#00f0ff] neon-text uppercase">Genesis Observatory</h1>
-        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Extinction Fix (Sep 1)</p>
+        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Performance Pass (Sep 1)</p>
       </div>
       <button id="btn-open-intro" class="ml-1 w-6 h-6 rounded-full bg-cyan-500/15 border border-cyan-400/50 text-cyan-300 flex items-center justify-center text-xs animate-pulse-glow flex-shrink-0"><i class="fa-solid fa-circle-question"></i></button>
     </div>
@@ -1878,6 +1878,12 @@ function drawInteractionBeam(a,b,color='rgba(0,240,255,0.7)') {
 // cyan color — you had to already know to look for it. This draws a real,
 // persistent (not fading) faint line between mentor and mentee every frame,
 // so the relationship is visible at a glance, not just inferable.
+// PERFORMANCE: did an svg.querySelector() DOM scan for every active
+// mentor/mentee pair, every frame, plus a full svg.querySelectorAll()
+// scan of every existing line for cleanup, every frame. Persistent map
+// keyed by pair, same pattern as the minimap fix above -- O(1) lookups
+// instead of DOM scans, identical visual result.
+const __mentorBondLines = new Map();
 function renderMentorBondLines() {
   const svg = document.getElementById('mentor-lines-svg'); if (!svg) return;
   const container = document.getElementById('terrarium-nodes');
@@ -1890,8 +1896,8 @@ function renderMentorBondLines() {
       if (!mentee) return;
       const pairKey = `${mentor.id}_${menteeId}`;
       activePairs.add(pairKey);
-      let line = svg.querySelector(`[data-pair="${pairKey}"]`);
       const pA = toIso(mentor.x, mentor.y, w, h), pB = toIso(mentee.x, mentee.y, w, h);
+      let line = __mentorBondLines.get(pairKey);
       if (!line) {
         line = document.createElementNS('http://www.w3.org/2000/svg','line');
         line.setAttribute('data-pair', pairKey);
@@ -1899,14 +1905,15 @@ function renderMentorBondLines() {
         line.setAttribute('stroke-width', '1');
         line.setAttribute('stroke-dasharray', '3 4');
         svg.appendChild(line);
+        __mentorBondLines.set(pairKey, line);
       }
       line.setAttribute('x1', `${pA.x}px`); line.setAttribute('y1', `${pA.y}px`);
       line.setAttribute('x2', `${pB.x}px`); line.setAttribute('y2', `${pB.y}px`);
     });
   });
   // Remove lines for bonds that no longer exist (mentee grew up, either died, etc.)
-  svg.querySelectorAll('[data-pair]').forEach(line => {
-    if (!activePairs.has(line.getAttribute('data-pair'))) line.remove();
+  __mentorBondLines.forEach((line, pairKey) => {
+    if (!activePairs.has(pairKey)) { line.remove(); __mentorBondLines.delete(pairKey); }
   });
 }
 
@@ -2249,7 +2256,15 @@ function sortIsometricElementsDepth() {
   // had a yCoord dataset set at all, meaning this was writing the same
   // constant z-index to every one of them 60 times a second for nothing.
   // Citizen elements are the only ones that actually move and need this.
-  container.querySelectorAll('[id^="agent_"]').forEach(child=>{ const y=parseFloat(child.dataset.yCoord||0); child.style.zIndex=Math.floor(y*10)+10; });
+  // PERFORMANCE (continued): querySelectorAll('[id^="agent_"]') walked
+  // every descendant of the terrarium every single frame to find them by
+  // attribute prefix. Iterating the citizens array (already in memory,
+  // no DOM traversal) plus a direct getElementById per citizen does the
+  // exact same work for far less cost.
+  window.appState.citizens.forEach(c => {
+    const child = document.getElementById(c.id);
+    if (child) { const y=parseFloat(child.dataset.yCoord||0); child.style.zIndex=Math.floor(y*10)+10; }
+  });
 }
 
 let __statUpdateFrameCounter = 0;
@@ -2696,17 +2711,33 @@ function renderMinimapStructures() {
   });
 }
 
+// PERFORMANCE: destroyed and recreated an SVG <circle> for every single
+// citizen, every single frame at 60fps (up to 40 * 60 = 2400 element
+// creations per second just for the minimap), even though positions
+// rarely change dramatically frame to frame. Persistent map instead --
+// update existing circles in place, only create/remove on population change.
+const __minimapCircles = new Map();
 function updateMinimap() {
   const svg=document.getElementById('minimap-svg'); if (!svg) return;
   if (!document.getElementById('minimap-structures-group')) renderMinimapStructures();
   let citizenGroup = document.getElementById('minimap-citizens-group');
-  if (!citizenGroup) { citizenGroup = document.createElementNS('http://www.w3.org/2000/svg','g'); citizenGroup.id='minimap-citizens-group'; svg.appendChild(citizenGroup); }
-  citizenGroup.innerHTML='';
+  if (!citizenGroup) { citizenGroup = document.createElementNS('http://www.w3.org/2000/svg','g'); citizenGroup.id='minimap-citizens-group'; svg.appendChild(citizenGroup); __minimapCircles.clear(); }
+  const seenIds = new Set();
   window.appState.citizens.forEach(c=>{
-    const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circle.setAttribute('cx',`${(c.x/1000)*100}%`); circle.setAttribute('cy',`${(c.y/1000)*100}%`); circle.setAttribute('r','3');
+    seenIds.add(c.id);
+    let circle = __minimapCircles.get(c.id);
+    if (!circle) {
+      circle=document.createElementNS('http://www.w3.org/2000/svg','circle');
+      circle.setAttribute('r','3');
+      citizenGroup.appendChild(circle);
+      __minimapCircles.set(c.id, circle);
+    }
+    circle.setAttribute('cx',`${(c.x/1000)*100}%`); circle.setAttribute('cy',`${(c.y/1000)*100}%`);
     const color = getIdeologyColor(c.ideology, 'hex');
-    circle.setAttribute('fill',color); circle.setAttribute('filter',`drop-shadow(0 0 2px ${color})`); citizenGroup.appendChild(circle);
+    circle.setAttribute('fill',color); circle.setAttribute('filter',`drop-shadow(0 0 2px ${color})`);
+  });
+  __minimapCircles.forEach((circle, id) => {
+    if (!seenIds.has(id)) { circle.remove(); __minimapCircles.delete(id); }
   });
 }
 
@@ -3920,6 +3951,9 @@ function renderDebugContent(activeTab) {
     // or added can be checked here directly, not just taken on faith.
     const entries = [
       { v: 'Latest', items: [
+        'Performance: fixed three places doing wasteful DOM work every single frame at 60fps, all following the same pattern already proven to work for citizen sprites (element pooling). The minimap was destroying and recreating an SVG circle for every citizen every frame (up to 2,400 element creations/sec at a full 40-population dome) -- now updates existing circles in place. The isometric depth-sort was running a full querySelectorAll DOM scan every frame to find citizen elements -- now iterates the citizens array directly with fast ID lookups. Mentor bond lines were doing a DOM query per active mentor/mentee pair plus a full cleanup scan, both every frame -- now uses a plain lookup map. No visual change, same output, meaningfully less work per frame, most noticeable at higher populations.'
+      ]},
+      { v: 'Extinction Fix', items: [
         'Fixed: the actual cause of recurring extinction events. Offline catch-up ages every citizen a fixed amount per processing tick, capped at 80 ticks for performance -- meaning any gap over ~4 minutes applies the same ~36-year maximum aging hit, regardless of whether you were away 6 hours or 6 months, and with zero memory of how recently the last catch-up already aged everyone. Checking in often (the natural way to play an idle game) reapplied that same near-maximum aging penalty on every single visit, compounding fast. Verified with a 500-run Monte Carlo simulation using the exact live constants: the old rate produced a 93% chance of population collapsing to a single, permanently unrecoverable citizen within just 5 days of realistic 6-hour check-ins -- extinction wasn\u2019t a rare edge case, it was the expected outcome of normal play. Reduced the per-tick aging rate from 0.45 to 0.15 (tested at 0% collapse across 5-day, 30-day, and 6-month check-in patterns, while preserving real generational turnover \u2014 roughly 400 deaths and 400 births over a 30-day simulated test, not immortality).',
         'Security: your live Gemini and Tavily API keys were hardcoded directly in the deployed file, readable by anyone via View Source on the public site (separately from the GitHub zip issue found earlier). Removed from this build. AI features (Analyst commentary, Chronicle narration) are off until keys are set locally \u2014 paste your own into the AI_CONFIG block near the top of the script to re-enable.'
       ]},
@@ -4568,5 +4602,7 @@ function initMinimapDrag() {
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOGMyZTliMjA5OGNkZGU4NzA5NTY0ZCIsImlzc3VlciI6Im5mc2VydmVyIn0.1zRptVcMa9eSc3Qj136xtp7ZRXlObzq3G0jm0GMHG7M"></script>
 
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTc5NzJiNGY1Yjk3ZDRmYjIwNGZkOCIsImlzc3VlciI6Im5mc2VydmVyIn0.iNlXHDIpsTUQ4eR49kz8Kuv4C_RtXilFMkSdwbDHHEg"></script>
+
+<script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgyZDVkOTEzMmYzMDAwODgwOTU3OCIsImlzc3VlciI6Im5mc2VydmVyIn0.2qIGGIxM_ALejVNMBTnayUUzVxdPm5I2H8ZEKuFwPUU"></script>
 </body>
 </html>
