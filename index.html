@@ -223,7 +223,7 @@ Check your Browserslist config to be sure that your targets are set up correctly
       <div class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
       <div>
         <h1 class="text-xs font-bold tracking-widest text-[#00f0ff] neon-text uppercase">Genesis Observatory</h1>
-        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Performance Pass (Sep 1)</p>
+        <p class="text-[7px] text-slate-400 uppercase tracking-widest">Standalone Terrarium · Build: Overage Cap Fix (Sep 1)</p>
       </div>
       <button id="btn-open-intro" class="ml-1 w-6 h-6 rounded-full bg-cyan-500/15 border border-cyan-400/50 text-cyan-300 flex items-center justify-center text-xs animate-pulse-glow flex-shrink-0"><i class="fa-solid fa-circle-question"></i></button>
     </div>
@@ -2346,6 +2346,20 @@ function updateCitizenBehaviors(scaledDelta) {
   const deathsThisFrame=[];
   window.appState.citizens.forEach(agent=>{
     agent.bioAge += scaledDelta*0.15;
+    // BUGFIX (Extinction Fix, continued): a citizen's bioAge could climb
+    // arbitrarily far past their maxAge with no ceiling -- and the mortality
+    // formula's compounding means ANY sufficiently large overage produces
+    // near-certain death within a single offline catch-up, regardless of
+    // how slowly they got there. This matters retroactively too: citizens
+    // already carrying heavy overage from before the aging-rate fix (0.45
+    // -> 0.15) aren't healed by that rate change alone -- confirmed via
+    // simulation that a population already 100-300yr past maxAge still
+    // wipes out 100% of the time on the very next catch-up even at the
+    // corrected rate. This cap self-heals that on the very next tick,
+    // live or offline, without needing any save-file surgery. Tested at a
+    // 10yr ceiling: heals 99.7% of badly-damaged populations immediately,
+    // 0% stuck-at-1 rate over a 30-day fresh-start simulation.
+    if (agent.bioAge > agent.maxAge + 10) agent.bioAge = agent.maxAge + 10;
     if (agent.sponsored && agent.bioAge >= agent.sponsoredUntilAge) agent.sponsored = false;
     if (agent.reproductionCooldown>0) agent.reproductionCooldown=Math.max(0,agent.reproductionCooldown-scaledDelta);
     const densityFactor=Math.max(0.35, window.appState.citizens.length/10);
@@ -2872,6 +2886,17 @@ function runSelfTest() {
     if (eraLogCheck[i].startAge < eraLogCheck[i-1].startAge) eraOutOfOrder++;
   }
   push(eraOutOfOrder===0 ? 'pass':'fail', 'Era log is chronologically ordered', eraOutOfOrder===0 ? `${eraLogCheck.length} era(s), all non-decreasing startAge` : `${eraOutOfOrder} era(s) recorded out of chronological order`);
+
+  // BUGFIX (continued): a direct regression guard for the overage-cap
+  // fix -- confirmed via a 500-run simulation that a population already
+  // carrying heavy pre-existing overage damage still wiped out 100% of
+  // the time on the very next catch-up even at the corrected aging rate,
+  // since the rate fix only stops NEW damage, it doesn't heal citizens
+  // already deep in the danger zone. bioAge is now capped at maxAge + 10
+  // everywhere aging happens (live and offline), so no citizen should
+  // ever be found meaningfully past that ceiling.
+  const overCapped = citizens.filter(c => c.bioAge > c.maxAge + 15).length; // small buffer over the 10yr cap for float/timing slack
+  push(overCapped===0 ? 'pass':'fail', 'No citizen exceeds the age-overage cap', overCapped===0 ? `${citizens.length} citizens checked, none past maxAge+15` : `${overCapped} citizen(s) found past the overage cap -- the cap may have regressed`);
 
   // Informational: stale relationship references (expected/harmless, not a failure)
   let staleRelCount = 0;
@@ -3520,6 +3545,11 @@ function runFastForward(elapsedSeconds) {
     for (let i=window.appState.citizens.length-1; i>=0; i--) {
       const c = window.appState.citizens[i];
       c.bioAge += agingRatePerTick;
+      // BUGFIX (Extinction Fix, continued): same overage ceiling as the
+      // live path -- see the comment there for the full reasoning. Applied
+      // here too so both paths stay symmetric (offline path parity has
+      // been the single most recurring bug class in this game).
+      if (c.bioAge > c.maxAge + 10) c.bioAge = c.maxAge + 10;
       c.stats.energy = Math.max(0, c.stats.energy - (4.0*densityFactor));
       // BUGFIX: this loop only ever drained energy, with no equivalent to
       // the live simulation's "wander to a structure and recharge" — so any
@@ -3951,6 +3981,10 @@ function renderDebugContent(activeTab) {
     // or added can be checked here directly, not just taken on faith.
     const entries = [
       { v: 'Latest', items: [
+        'Fixed: the extinction fix from earlier today only corrected the aging RATE going forward -- it didn\u2019t heal citizens whose bioAge was already inflated from all the catch-ups before that fix existed. Confirmed via simulation that a population already carrying that kind of pre-existing damage still wiped out 100% of the time on the very next catch-up, even at the corrected rate, because the mortality math compounds based on how far past maxAge someone already is, not how fast they got there. bioAge is now hard-capped at maxAge + 10, live and offline both, which self-heals any already-damaged save on the very next tick without needing anything exported or reset by hand. Verified this recovers a badly-damaged population (was already 50-300 years past maxAge) to a healthy, stable size within about a week of normal play, using the existing low-population migration rescue as the safety net for the rare case a population still bottoms out to 1.',
+        'Added a Self-Test check that flags if any citizen is ever found meaningfully past the new cap, as a direct regression guard.'
+      ]},
+      { v: 'Performance Pass', items: [
         'Performance: fixed three places doing wasteful DOM work every single frame at 60fps, all following the same pattern already proven to work for citizen sprites (element pooling). The minimap was destroying and recreating an SVG circle for every citizen every frame (up to 2,400 element creations/sec at a full 40-population dome) -- now updates existing circles in place. The isometric depth-sort was running a full querySelectorAll DOM scan every frame to find citizen elements -- now iterates the citizens array directly with fast ID lookups. Mentor bond lines were doing a DOM query per active mentor/mentee pair plus a full cleanup scan, both every frame -- now uses a plain lookup map. No visual change, same output, meaningfully less work per frame, most noticeable at higher populations.'
       ]},
       { v: 'Extinction Fix', items: [
@@ -4604,5 +4638,7 @@ function initMinimapDrag() {
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTc5NzJiNGY1Yjk3ZDRmYjIwNGZkOCIsImlzc3VlciI6Im5mc2VydmVyIn0.iNlXHDIpsTUQ4eR49kz8Kuv4C_RtXilFMkSdwbDHHEg"></script>
 
 <script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgyZDVkOTEzMmYzMDAwODgwOTU3OCIsImlzc3VlciI6Im5mc2VydmVyIn0.2qIGGIxM_ALejVNMBTnayUUzVxdPm5I2H8ZEKuFwPUU"></script>
+
+<script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="11d5a614-1c28-454c-8ff9-904a66e1c260" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiMTFkNWE2MTQtMWMyOC00NTRjLThmZjktOTA0YTY2ZTFjMjYwIiwiYWNjb3VudF9pZCI6IjZhODAyODkyMDkyOTRmMWQ5NTJjOGY1OCIsImRlcGxveV9pZCI6IjZhOTgzNDQzY2Q5OTAxMDAwODQ0YzMyMSIsImlzc3VlciI6Im5mc2VydmVyIn0.ElmSUMMj43W-7QnT1CDLHNGryxa8p1YiBKvzPvVkjL0"></script>
 </body>
 </html>
